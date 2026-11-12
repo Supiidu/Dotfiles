@@ -24,7 +24,12 @@ for svc in power-profiles-daemon.service tuned.service tuned-ppd.service; do
 done
 for pkg in power-profiles-daemon tuned-ppd; do
   if pacman -Qq "$pkg" >/dev/null 2>&1; then
-    sudo pacman -Rns --noconfirm "$pkg"
+    echo "Removendo gerenciador conflitante instalado: $pkg"
+    if ! sudo pacman -Rns --noconfirm "$pkg"; then
+      echo "[AVISO] Nao foi possivel remover $pkg; prosseguindo com a instalacao."
+    fi
+  else
+    echo "Nao instalado: $pkg (sem necessidade de remover)"
   fi
 done
 
