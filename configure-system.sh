@@ -18,20 +18,13 @@ trap 'code=$?; echo "ERRO na linha $LINENO: $BASH_COMMAND (codigo $code)"; echo 
 echo "== Arch + Niri + Amane/Suzuha + TLP + Obsidian =="
 sudo -v
 
-echo "[1/7] Gerenciadores de energia conflitantes"
+echo "[1/7] Desativando servicos de energia conflitantes (sem remover pacotes)"
 for svc in power-profiles-daemon.service tuned.service tuned-ppd.service; do
-  sudo systemctl disable --now "$svc" >/dev/null 2>&1 || true
-done
-for pkg in power-profiles-daemon tuned-ppd; do
-  if pacman -Qq "$pkg" >/dev/null 2>&1; then
-    echo "Removendo gerenciador conflitante instalado: $pkg"
-    if ! sudo pacman -Rns --noconfirm "$pkg"; then
-      echo "[AVISO] Nao foi possivel remover $pkg; prosseguindo com a instalacao."
-    fi
-  else
-    echo "Nao instalado: $pkg (sem necessidade de remover)"
+  if systemctl list-unit-files --no-legend "$svc" 2>/dev/null | grep -q "$svc"; then
+    sudo systemctl disable --now "$svc" >/dev/null 2>&1 || true
   fi
 done
+echo "Etapa 1 concluida; nenhum pacote foi removido."
 
 echo "[2/7] Pacotes oficiais e dependencias"
 sudo pacman -Syu --needed --noconfirm \
