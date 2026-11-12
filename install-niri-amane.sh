@@ -129,11 +129,41 @@ data = path.read_text(encoding="utf-8")
 start = re.search(r"(?m)^[ \t]*binds[ \t]*\{[ \t]*$", data)
 if not start:
     raise SystemExit("Bloco binds nao encontrado; config preservado.")
-end = re.search(r"(?m)^}[ \t]*$", data[start.end():])
-if not end:
-    raise SystemExit("Fim do bloco binds nao encontrado; config preservado.")
+def find_closing_brace(text, pos):
+    depth = 1
+    in_string = False
+    escaped = False
+    in_comment = False
+    for i in range(pos, len(text)):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if in_comment:
+            if ch == "\n":
+                in_comment = False
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == "/" and nxt == "/":
+            in_comment = True
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    raise SystemExit("Bloco binds incompleto; config preservado.")
+
 a = start.end()
-b = a + end.start()
+b = find_closing_brace(data, a)
 body = data[a:b]
 # Remove os conflitos de Mod/Super+D e Mod/Super+R do Niri padrao.
 body = re.sub(
