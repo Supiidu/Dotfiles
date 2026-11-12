@@ -36,7 +36,7 @@ sudo pacman -Syu --needed --noconfirm \
   git base-devel rustup gcc pkgconf curl python \
   wayland libxkbcommon fontconfig freetype2 expat \
   vulkan-icd-loader libpulse pam \
-  obsidian tlp \
+  obsidian firefox tlp \
   brightnessctl playerctl cava ffmpeg libnotify \
   ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols
 
@@ -301,7 +301,7 @@ echo "========== PRONTO =========="
 echo "Amane compilado: $HOME/.cache/amane/amane-shell"
 echo "Super+R = Suzuha launcher | Super+D = resize por preset"
 echo "Autostart configurado. Entre novamente na sessao Niri."
-echo "TLP: BAL (tomada), SAV (bateria); Obsidian instalado."
+echo "TLP: BAL (tomada), SAV (bateria); Obsidian e Firefox instalados."
 echo "Backups: $BACKUP"
 echo "Log: $LOG"
 echo "OBS: Mixer por aplicativo foi desativado (API incompatível no upstream)."
