@@ -102,7 +102,25 @@ else
   echo "$SUZUHA ja existe; faca backup antes de continuar." >&2
   exit 1
 fi
-"$AMANE" compile
+if ! "$AMANE" compile; then
+  echo "[AVISO] Falha de compilacao. Conferindo incompatibilidade AudioApp no mixer..."
+  MIXER="$SUZUHA/src/mixer.rs"
+  if [[ -f "$MIXER" ]] && grep -q 'AudioApp' "$MIXER"; then
+    cp -n "$MIXER" "$MIXER.before-audio-compat-fix.rs" || true
+    cat > "$MIXER" <<'RUST'
+pub const MIXER_ICON: &str = "\u{f1543}";
+pub fn open() {}
+pub fn ipc(_: &[String]) -> String {
+    String::from("Mixer de apps indisponivel nesta versao do Amane")
+}
+RUST
+    echo "[AVISO] Mixer por aplicativo foi desativado; tentando compilar novamente."
+    "$AMANE" compile
+  else
+    echo "Falha nao identificada como incompatibilidade do mixer. Veja o log." >&2
+    exit 1
+  fi
+fi
 
 echo "[7/7] Keybinds Niri e autostart, com backup"
 NIRI_CONFIG="$HOME/.config/niri/config.kdl"
