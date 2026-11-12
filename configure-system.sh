@@ -286,6 +286,17 @@ if [[ "$BINDS" != "$MAIN" ]]; then
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 fi
 
+# As instalacoes anteriores foram movidas apenas para permitir recuperacao se falhasse.
+# A instalacao nova compilou e o Niri validou: agora podemos apagar os artefatos antigos.
+for old in amane-cache-previous amane-previous suzuha-previous suzuha-fonts-previous amane-cli-previous amane-config-path-previous; do
+  if [[ -e "$BACKUP/$old" ]]; then
+    rm -rf -- "$BACKUP/$old"
+  fi
+done
+if [[ ! -x "$HOME/.cache/amane/amane-shell" ]]; then
+  echo "[AVISO] Nao localizei o executavel da shell no cache (confira o log do amane)."
+fi
+
 echo "========== PRONTO =========="
 echo "Amane compilado: $HOME/.cache/amane/amane-shell"
 echo "Super+R = Suzuha launcher | Super+D = resize por preset"
