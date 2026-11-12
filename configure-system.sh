@@ -35,7 +35,7 @@ sudo pacman -Syu --needed --noconfirm \
   wayland libxkbcommon fontconfig freetype2 expat \
   vulkan-icd-loader libpulse pam \
   cava ffmpeg libnotify brightnessctl \
-  ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols ttf-material-icons
+  ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols ttf-material-icons playerctl
 
 echo "[3/7] TLP: balanced na tomada e power-saver na bateria"
 sudo install -d -m 755 /etc/tlp.d
@@ -117,18 +117,35 @@ if [[ ! -f "$NIRI_CONFIG" ]]; then
 fi
 BACKUP="$NIRI_CONFIG.bak-$(date +%Y%m%d-%H%M%S)"
 cp -a "$NIRI_CONFIG" "$BACKUP"
-python3 - "$NIRI_CONFIG" "$AMANE" <<'PY'
+
+# No perfil Niri + DankMaterialShell do archinstall, binds ficam num include separado.
+BIND_CONFIG="$NIRI_CONFIG"
+if grep -Eq '^[[:space:]]*include[[:space:]]+"dms/binds.kdl"' "$NIRI_CONFIG"; then
+  BIND_CONFIG="$HOME/.config/niri/dms/binds.kdl"
+  if [[ ! -f "$BIND_CONFIG" ]]; then
+    echo "Nao encontrei $BIND_CONFIG, embora config.kdl o inclua." >&2
+    exit 1
+  fi
+fi
+BIND_BACKUP="$BIND_CONFIG.bak-$(date +%Y%m%d-%H%M%S)"
+if [[ "$BIND_CONFIG" != "$NIRI_CONFIG" ]]; then
+  cp -a "$BIND_CONFIG" "$BIND_BACKUP"
+fi
+python3 - "$NIRI_CONFIG" "$BIND_CONFIG" "$AMANE" <<'PY'
 import json
 import pathlib
 import re
 import sys
 
-path = pathlib.Path(sys.argv[1])
-amane = sys.argv[2]
-data = path.read_text(encoding="utf-8")
-start = re.search(r"(?m)^[ \t]*binds[ \t]*\{[ \t]*$", data)
+main_path = pathlib.Path(sys.argv[1])
+bind_path = pathlib.Path(sys.argv[2])
+amane = sys.argv[3]
+bindings = bind_path.read_text(encoding="utf-8")
+main = main_path.read_text(encoding="utf-8")
+start = re.search(r"(?m)^[ \t]*binds[ \t]*\{[ \t]*$", bindings)
 if not start:
-    raise SystemExit("Bloco binds nao encontrado; config preservado.")
+    raise SystemExit(f"Bloco binds nao encontrado em {bind_path}; backups preservados.")
+
 def find_closing_brace(text, pos):
     depth = 1
     in_string = False
@@ -160,43 +177,85 @@ def find_closing_brace(text, pos):
             depth -= 1
             if depth == 0:
                 return i
-    raise SystemExit("Bloco binds incompleto; config preservado.")
+    raise SystemExit("Bloco binds incompleto; arquivos de configuracao preservados.")
 
 a = start.end()
-b = find_closing_brace(data, a)
-body = data[a:b]
-# Remove os conflitos de Mod/Super+D e Mod/Super+R do Niri padrao.
+b = find_closing_brace(bindings, a)
+body = bindings[a:b]
+# Remove conflitos do mapa padrao: Mod+D (overview) e Mod+R (largura).
 body = re.sub(
     r"(?m)^[ \t]*(?:Mod|Super)\+(?:D|R)(?=[ \t])[^\n]*\{[^\n]*\}[ \t]*(?://[^\n]*)?\n?",
     "", body
 )
 if re.search(r"(?m)^[ \t]*(?:Mod|Super)\+(?:D|R)(?=[ \t])", body):
-    raise SystemExit("Atalho multiline conflitante detectado; nao foi editado.")
+    raise SystemExit("Atalho multiline conflitante detectado; config preservado.")
+
 new = (
     "\n    // Adicionado por configure-system.sh\n"
-    f'    Super+R hotkey-overlay-title="Suzuha launcher" '
+    f'    Mod+R hotkey-overlay-title="Suzuha launcher" '
     f'{{ spawn {json.dumps(amane)} "ipc" "call" "launcher" "toggle"; }}\n'
-    '    Super+D hotkey-overlay-title="Resize coluna" '
+    '    Mod+D hotkey-overlay-title="Resize coluna" '
     '{ switch-preset-column-width; }\n'
 )
-data = data[:a] + new + body + data[b:]
-# Evita duas barras, preservando a linha anterior como comentario.
-data = re.sub(
+# Mod usa tecla Super numa sessao Niri habitual.
+body = new + body
+
+# O perfil Niri+DMS usa dms.service: migramos teclas de audio/brilho para utilitarios nativos.
+if bind_path != main_path:
+    replacements = {
+        'spawn "dms" "ipc" "call" "audio" "increment" "3";':
+            'spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "3%+";',
+        'spawn "dms" "ipc" "call" "audio" "decrement" "3";':
+            'spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "3%-";',
+        'spawn "dms" "ipc" "call" "audio" "mute";':
+            'spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle";',
+        'spawn "dms" "ipc" "call" "audio" "micmute";':
+            'spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle";',
+        'spawn "dms" "ipc" "call" "brightness" "increment" "5" "";':
+            'spawn "brightnessctl" "set" "+5%";',
+        'spawn "dms" "ipc" "call" "brightness" "decrement" "5" "";':
+            'spawn "brightnessctl" "set" "5%-";',
+        'spawn "dms" "ipc" "call" "mpris" "playPause";':
+            'spawn "playerctl" "play-pause";',
+        'spawn "dms" "ipc" "call" "mpris" "previous";':
+            'spawn "playerctl" "previous";',
+        'spawn "dms" "ipc" "call" "mpris" "next";':
+            'spawn "playerctl" "next";',
+    }
+    for old, val in replacements.items():
+        body = body.replace(old, val)
+
+bindings = bindings[:a] + body + bindings[b:]
+main = re.sub(
     r'(?m)^([ \t]*)(spawn-at-startup[ \t]+"waybar"[^\n]*)$',
-    r'\1// Desativado (Suzuha substitui Waybar): \2', data
+    r'\1// Desativado (Suzuha substitui Waybar): \2', main
 )
-# Nao duplica autostart ao reexecutar.
-data = re.sub(
+main = re.sub(
     r'(?m)^[ \t]*spawn-at-startup[ \t]+"[^"\n]*/\.cargo/bin/amane"[ \t]+"run"[ \t]*\n?',
-    "", data
+    "", main
 )
-data += f'\nspawn-at-startup {json.dumps(amane)} "run"\n'
-path.write_text(data, encoding="utf-8")
+main += f'\nspawn-at-startup {json.dumps(amane)} "run"\n'
+bind_path.write_text(bindings, encoding="utf-8")
+main_path.write_text(main, encoding="utf-8")
 PY
 if ! niri validate --config "$NIRI_CONFIG"; then
-  echo "Config invalido; restaurando backup $BACKUP"
+  echo "Config invalido: restaurando backups."
   cp -a "$BACKUP" "$NIRI_CONFIG"
+  if [[ "$BIND_CONFIG" != "$NIRI_CONFIG" ]]; then
+    cp -a "$BIND_BACKUP" "$BIND_CONFIG"
+  fi
   exit 1
+fi
+
+# O DMS eh iniciado pelo perfil Niri+DMS do archinstall via systemd/user.
+# Mascarar o servico evita duas shells competindo pela barra e atalhos.
+if [[ "$BIND_CONFIG" != "$NIRI_CONFIG" ]]; then
+  mkdir -p "$HOME/.config/systemd/user"
+  if [[ ! -e "$HOME/.config/systemd/user/dms.service" ]]; then
+    ln -s /dev/null "$HOME/.config/systemd/user/dms.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "DMS mascarado para a proxima sessao; Suzuha vira a shell ativa."
+  fi
 fi
 
 echo "=== PRONTO ==="
@@ -205,6 +264,7 @@ echo "Super+D: alterna larguras da coluna (resize Niri)"
 echo "Obsidian: abra com 'obsidian'"
 echo "TLP: BAL na tomada; SAV na bateria"
 echo "Backup do Niri: $BACKUP"
+echo "Backup dos atalhos: $BIND_BACKUP"
 if printenv NIRI_SOCKET >/dev/null 2>&1; then
   "$AMANE" run || echo "Amane ja esta rodando ou precisa de uma nova sessao."
 else
