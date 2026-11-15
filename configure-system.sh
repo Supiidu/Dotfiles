@@ -12,7 +12,7 @@ exec > >(tee -a "$LOG") 2>&1
 trap 'code=$?; echo "[ERRO] Linha $LINENO, codigo $code. Log: $LOG" >&2' ERR
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { echo "[ERRO] $*" >&2; exit 1; }
-ask() { whiptail --title "Supiidu | Debian Sid" --yesno "$1" 17 78; }
+ask() { whiptail --title "Supiidu | Debian Sid" --yesno "$1" 17 78 2>/dev/tty; }
 
 [[ $EUID -ne 0 ]] || die "Execute como seu usuario normal (sem sudo antes do bash)."
 [[ -t 0 ]] || die "Abra este script em um terminal interativo."
@@ -171,7 +171,9 @@ cat > "$CONFIG" <<'KDL'
 // Niri + shell temporaria, pronta para ser substituida por Amane.
 spawn-at-startup "waybar"
 spawn-at-startup "mako"
-layout { gaps 10 }
+layout {
+    gaps 10
+}
 window-rule {
     geometry-corner-radius 10
     clip-to-geometry true
