@@ -1,307 +1,217 @@
 #!/usr/bin/env bash
-# configure-system.sh — Arch Linux + Niri + Amane/Suzuha + TLP + Obsidian
-# Versao 2: limpeza segura, instalacao upstream, compatibilidade com mixer antigo.
+# Debian 13 Minimal -> Debian Sid + Niri Git, SDDM e ambiente leve.
+# Rode como usuario normal depois de instalar sudo e git.
 set -Eeuo pipefail
+export LC_ALL=C
+umask 022
 
-if [[ "$EUID" -eq 0 ]]; then
-  echo "ERRO: entre como seu usuario normal; nao execute como root." >&2
-  exit 1
-fi
-if ! command -v pacman >/dev/null || ! command -v niri >/dev/null; then
-  echo "ERRO: Arch Linux com Niri instalado e necessario." >&2
-  exit 1
-fi
-
-STATE="$HOME/.local/state/configure-system"
-BACKUP="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$STATE" "$BACKUP"
-LOG="$STATE/install.log"
+STATE="$HOME/.local/state/supiidu-bootstrap"
+mkdir -p "$STATE"
+LOG="$STATE/run-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
-trap 'rc=$?; echo "[ERRO] Linha $LINENO, codigo $rc. Log: $LOG" >&2' ERR
-export PATH="$HOME/.cargo/bin:$PATH"
+trap 'code=$?; echo "[ERRO] Linha $LINENO, codigo $code. Log: $LOG" >&2' ERR
+step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+die() { echo "[ERRO] $*" >&2; exit 1; }
+ask() { whiptail --title "Supiidu | Debian Sid" --yesno "$1" 17 78; }
 
-echo "== configure-system v2 =="
-echo "Backup: $BACKUP"
-echo "Log: $LOG"
-echo "Nunca apaga o Arch, seus arquivos pessoais ou o Niri."
+[[ $EUID -ne 0 ]] || die "Execute como seu usuario normal (sem sudo antes do bash)."
+[[ -t 0 ]] || die "Abra este script em um terminal interativo."
+command -v sudo >/dev/null || die "Instale e configure sudo antes."
+command -v git >/dev/null || die "Instale git antes."
+command -v apt-get >/dev/null || die "APT ausente."
+. /etc/os-release
+[[ $ID == debian ]] || die "Somente Debian."
+[[ $VERSION_CODENAME == trixie || $VERSION_CODENAME == sid ]] || die "Esperava Debian Trixie ou Sid."
+[[ $(dpkg --print-architecture) == amd64 ]] || die "Perfil testado apenas para amd64."
+[[ $(ps -p 1 -o comm=) == systemd ]] || die "Precisa do systemd como init."
+
+cat <<'BANNER'
+===========================================================
+         Debian Sid + Niri Git / Supiidu
+===========================================================
+- Sem Nix, AUR, GNOME Shell, Plasma Desktop ou DMS.
+- Instala APT minimal, migra para Sid e configura Dux Labs.
+- Instala SDDM, Mesa Intel, PipeWire, Niri e shell leve.
+- Super+R launcher; Super+D redimensionar.
+- Faz backup de fontes APT. Nao formata nem reinicia.
+BANNER
+echo "Sid pode quebrar durante transicoes de bibliotecas."
+echo "O Dux Labs e um repositorio de terceiros e exige confianca na chave dele."
+read -r -p "Digite INSTALAR para continuar (ou Ctrl+C): " OK
+[[ $OK == INSTALAR ]] || die "Cancelado."
 sudo -v
 
-# Pacotes mantidos: nao desinstala bibliotecas que outros aplicativos usam.
-echo "[1/7] Instalando dependencias oficiais"
-for svc in power-profiles-daemon.service tuned.service tuned-ppd.service; do
-  sudo systemctl disable --now "$svc" >/dev/null 2>&1 || true
-done
-# Usamos TLP sem tlp-pd para evitar disputa de perfil com outros servicos.
-sudo pacman -Syu --needed --noconfirm \
-  git base-devel rustup gcc pkgconf curl python \
-  wayland libxkbcommon fontconfig freetype2 expat \
-  vulkan-icd-loader libpulse pam \
-  obsidian firefox tlp \
-  brightnessctl playerctl cava ffmpeg libnotify \
-  ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols
+step "1/7 Desativar pacotes recomendados ANTES de instalar qualquer pacote"
+printf '%s\n' 'APT::Install-Recommends "false";' 'APT::Install-Suggests "false";' |
+  sudo tee /etc/apt/apt.conf.d/99-supiidu-no-recommends >/dev/null
+sudo apt-get update
+sudo env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
+  whiptail curl gnupg ca-certificates
 
-echo "[2/7] TLP: balanced na tomada, power-saver na bateria"
-sudo install -d -m 755 /etc/tlp.d
-printf '%s\n' \
-  '# Perfil do Lenovo IdeaPad Gaming 3i configurado por configure-system.sh' \
-  'TLP_AUTO_SWITCH=1' \
-  'TLP_PROFILE_AC=BAL' \
-  'TLP_PROFILE_BAT=SAV' \
-  | sudo tee /etc/tlp.d/90-ideapad-battery.conf >/dev/null
-sudo systemctl enable tlp.service
-sudo tlp start
-sudo tlp-stat -s || true
+ask "Deseja migrar integralmente para Debian Sid?
 
-echo "[3/7] Limpando Amane/Suzuha da instalacao anterior"
-AMANE_SRC="$HOME/.local/src/amane"
-SUZUHA="$HOME/.config/amane"
-for spec in "amane:$AMANE_SRC:MystiaFin/amane" "suzuha:$SUZUHA:MystiaFin/suzuha"; do
-  name="$(printf '%s' "$spec" | cut -d: -f1)"
-  folder="$(printf '%s' "$spec" | cut -d: -f2)"
-  expected="$(printf '%s' "$spec" | cut -d: -f3)"
-  if [[ -e "$folder" ]]; then
-    if [[ ! -d "$folder/.git" ]]; then
-      echo "ERRO: $folder nao e um clone Git; nao vou apagar arquivos desconhecidos." >&2
-      exit 1
-    fi
-    origin="$(git -C "$folder" remote get-url origin)"
-    if [[ "$origin" != *"$expected"* ]]; then
-      echo "ERRO: origem inesperada ($origin). Preservando $folder." >&2
-      exit 1
-    fi
-    mv "$folder" "$BACKUP/$name-previous"
-    echo "Instalacao anterior guardada em $BACKUP/$name-previous"
+Use um Debian Minimal recem-instalado; salve seus arquivos antes.
+Os repositorios atuais serao arquivados. O upgrade nao tem rollback automatico." || die "Cancelado."
+
+BACKUP="/var/backups/supiidu-sid-$(date +%Y%m%d-%H%M%S)"
+sudo install -d -m 0700 "$BACKUP"
+step "2/7 Repositorios oficiais Debian Sid (backup: $BACKUP)"
+if [[ $VERSION_CODENAME != sid ]]; then
+  if [[ -f /etc/apt/sources.list ]]; then
+    sudo mv /etc/apt/sources.list "$BACKUP/sources.list"
   fi
-done
-
-# Estes diretorios sao especificos da antiga instalacao Amane.
-if [[ -d "$HOME/.cache/amane" ]]; then
-  mv "$HOME/.cache/amane" "$BACKUP/amane-cache-previous"
-fi
-if [[ -d "$HOME/.local/share/fonts/suzuha" ]]; then
-  mv "$HOME/.local/share/fonts/suzuha" "$BACKUP/suzuha-fonts-previous"
-fi
-if [[ -f "$HOME/.local/state/amane/config-path" ]]; then
-  mv "$HOME/.local/state/amane/config-path" "$BACKUP/amane-config-path-previous"
-fi
-# A versao anterior podia ter mascarado o DMS mesmo sem compilar Suzuha.
-DMS_MASK="$HOME/.config/systemd/user/dms.service"
-if [[ -L "$DMS_MASK" ]] && [[ "$(readlink "$DMS_MASK")" == /dev/null ]]; then
-  rm "$DMS_MASK"
-fi
-if command -v cargo >/dev/null; then
-  cargo uninstall amane-cli 2>/dev/null || true
-fi
-if [[ -f "$HOME/.cargo/bin/amane" ]]; then
-  mv "$HOME/.cargo/bin/amane" "$BACKUP/amane-cli-previous"
-fi
-
-echo "[4/7] Instalando Amane do GitHub via instalador oficial"
-rustup toolchain install stable --profile minimal
-rustup default stable
-mkdir -p "$HOME/.local/src"
-git clone --depth 1 https://github.com/MystiaFin/amane.git "$AMANE_SRC"
-(cd "$AMANE_SRC" && ./install.sh)
-AMANE="$HOME/.cargo/bin/amane"
-if [[ ! -x "$AMANE" ]]; then
-  echo "ERRO: CLI do Amane nao foi criado em $AMANE" >&2
-  exit 1
-fi
-
-echo "[5/7] Instalando Suzuha e corrigindo API de mixer incompativel"
-mkdir -p "$HOME/.config"
-git clone --depth 1 https://github.com/MystiaFin/suzuha.git "$SUZUHA"
-if [[ ! -f "$SUZUHA/src/mixer.rs" ]]; then
-  echo "ERRO: estrutura inesperada do Suzuha; parei sem alterar o Niri." >&2
-  exit 1
-fi
-cp "$SUZUHA/src/mixer.rs" "$BACKUP/mixer-original.rs"
-# Na versao atual do Amane nao existe AudioApp nem Audio::apps().
-# A shell inteira pode compilar sem esse painel: preserva os nomes que o launcher usa.
-if grep -q 'AudioApp' "$SUZUHA/src/mixer.rs"; then
-  cat > "$SUZUHA/src/mixer.rs" <<'RUST'
-pub const MIXER_ICON: &str = "\u{f1543}";
-pub fn open() {}
-pub fn ipc(_: &[String]) -> String {
-    String::from("O mixer por aplicativo esta indisponivel nesta versao")
-}
-RUST
-  echo "Compatibilidade: mixer por aplicativo temporariamente desativado."
-fi
-echo "Compilando Suzuha (sem inicializar a shell no TTY)"
-"$AMANE" compile
-
-echo "[6/7] Fontes Poppins e Material Design (nao bloqueantes)"
-FONT_DIR="$HOME/.local/share/fonts/suzuha"
-mkdir -p "$FONT_DIR"
-download_font() {
-  if ! curl -fLsS --retry 1 --connect-timeout 10 --max-time 30 \
-      "$1" -o "$FONT_DIR/$2"; then
-    rm -f "$FONT_DIR/$2"
-    echo "[AVISO] Nao foi possivel baixar a fonte $2"
+  shopt -s nullglob
+  for src in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    sudo mv "$src" "$BACKUP/$(basename "$src")"
+  done
+  shopt -u nullglob
+  sudo tee /etc/apt/sources.list.d/debian-sid.sources >/dev/null <<'SID'
+Types: deb
+URIs: https://deb.debian.org/debian/
+Suites: sid
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+SID
+else
+  if grep -RqsE '^Suites:[[:space:]]*(trixie|forky)' /etc/apt/sources.list.d 2>/dev/null; then
+    die "Ha repositorios Stable/Testing no sistema Sid; revise as fontes manualmente."
   fi
-}
-download_font 'https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins%5Bwght%5D.ttf' 'Poppins-Variable.ttf'
-download_font 'https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/7.4.47/fonts/materialdesignicons-webfont.ttf' 'materialdesignicons-webfont.ttf'
-fc-cache -f "$FONT_DIR" || true
-
-echo "[7/7] Configurando Niri, atalhos e startup APOS compilacao"
-MAIN="$HOME/.config/niri/config.kdl"
-if [[ ! -f "$MAIN" ]]; then
-  echo "ERRO: $MAIN nao existe; nao alterei a sessao grafica." >&2
-  exit 1
-fi
-cp -a "$MAIN" "$BACKUP/niri-config-before.kdl"
-BINDS="$MAIN"
-if grep -Eq '^[[:space:]]*include[[:space:]]+"dms/binds.kdl"' "$MAIN"; then
-  BINDS="$HOME/.config/niri/dms/binds.kdl"
-fi
-if [[ ! -f "$BINDS" ]]; then
-  echo "ERRO: arquivo de atalhos do Niri nao encontrado: $BINDS" >&2
-  exit 1
-fi
-if [[ "$BINDS" != "$MAIN" ]]; then
-  cp -a "$BINDS" "$BACKUP/niri-binds-before.kdl"
 fi
 
-python3 - "$MAIN" "$BINDS" "$AMANE" <<'PY'
-import pathlib
-import re
-import sys
-import json
+sudo apt-get update
+SIM="$STATE/upgrade-preview.log"
+sudo apt-get -s --no-install-recommends full-upgrade > "$SIM"
+REMOVALS=$(grep -c '^Remv ' "$SIM" || true)
+echo "Simulacao: $SIM | Remocoes: $REMOVALS"
+grep '^Remv ' "$SIM" || true
+if grep -Eq '^Remv (apt|bash|dpkg|sudo|systemd|systemd-sysv|linux-image-amd64|grub-pc|grub-efi-amd64|coreutils)([[:space:]]|$)' "$SIM"; then
+  die "A simulacao remove componentes criticos. Nao executarei o upgrade."
+fi
+ask "Simulacao de full-upgrade concluida.
 
-main_path, binds_path = map(pathlib.Path, sys.argv[1:3])
-amane = sys.argv[3]
-main = main_path.read_text(encoding="utf-8")
-binds = binds_path.read_text(encoding="utf-8")
-m = re.search(r"(?m)^[ \t]*binds[ \t]*\{[ \t]*$", binds)
-if m is None:
-    raise SystemExit("Nenhum bloco 'binds {' encontrado; parei sem salvar.")
+Pacotes previstos para remocao: $REMOVALS
+Arquivo de revisao: $SIM
 
-def end_brace(content, pos):
-    depth, quote, escape, comment = 1, False, False, False
-    for i in range(pos, len(content)):
-        ch = content[i]
-        nx = content[i + 1] if i + 1 < len(content) else ""
-        if comment:
-            if ch == "\n": comment = False
-            continue
-        if quote:
-            if escape: escape = False
-            elif ch == "\\": escape = True
-            elif ch == '"': quote = False
-            continue
-        if ch == "/" and nx == "/": comment = True; continue
-        if ch == '"': quote = True
-        elif ch == "{": depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0: return i
-    raise ValueError("Chaves KDL incompletas")
+Voce aceita essas mudancas e autoriza o upgrade completo para Sid?" || die "Upgrade cancelado."
+step "Migrando para Sid (nao interrompa o dpkg)"
+sudo env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends full-upgrade
+sudo dpkg --audit
+step "Migracao concluida."
 
-a = m.end()
-b = end_brace(binds, a)
-body = binds[a:b]
-# Os binds do perfil Niri+DMS sao linhas ou blocos de varias linhas.
-# Removemos so binds que disputam Mod+D/R ou dependem do DMS removido.
-lines = body.splitlines(keepends=True)
-kept, i = [], 0
-while i < len(lines):
-    line = lines[i]
-    if re.match(r"^\s*(?://|$)", line):
-        kept.append(line)
-        i += 1
-        continue
-    if not re.match(r"^\s*[A-Za-z0-9_+/-]+(?:\s|$)", line) or "{" not in line:
-        kept.append(line)
-        i += 1
-        continue
-    node = line
-    i += 1
-    depth = line.count("{") - line.count("}")
-    while depth > 0 and i < len(lines):
-        node += lines[i]
-        depth += lines[i].count("{") - lines[i].count("}")
-        i += 1
-    if re.match(r"^\s*(Mod|Super)\+(D|R)(?=\s)", node):
-        continue
-    if binds_path != main_path and 'spawn "dms"' in node:
-        continue
-    kept.append(node)
+step "3/7 Repositorio Dux Labs (Debian_Unstable)"
+ask "Autoriza adicionar o repositorio de TERCEIROS Dux Labs para instalar niri-git?
+Ele nao e mantido nem auditado pela equipe do Debian." || die "Repositorio Dux nao autorizado."
 
-extras = (
-    '\n    // configure-system.sh v2\n'
-    f'    Mod+R hotkey-overlay-title="Suzuha Launcher" '
-    f'{{ spawn {json.dumps(amane)} "ipc" "call" "launcher" "toggle"; }}\n'
-    '    Mod+D hotkey-overlay-title="Resize Column" '
-    '{ switch-preset-column-width; }\n'
+KEY="$(mktemp)"
+GPGKEY="$(mktemp)"
+trap 'rm -f "$KEY" "$GPGKEY"' EXIT
+curl -fL --retry 3 --connect-timeout 15 \
+  'https://download.opensuse.org/repositories/home:duxlabs-dev:dux-repo/Debian_Unstable/Release.key' \
+  -o "$KEY"
+gpg --batch --show-keys --with-fingerprint "$KEY"
+ask "A impressao digital da chave apareceu no terminal.
+Autoriza instalar esta chave no APT (Signed-By exclusivo do Dux Labs)?" || die "Chave rejeitada."
+gpg --batch --yes --dearmor -o "$GPGKEY" "$KEY"
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo install -m 0644 "$GPGKEY" /etc/apt/keyrings/duxlabs-sid.gpg
+sudo tee /etc/apt/sources.list.d/duxlabs-sid.sources >/dev/null <<'DUX'
+Types: deb
+URIs: https://download.opensuse.org/repositories/home:/duxlabs-dev:/dux-repo/Debian_Unstable/
+Suites: /
+Signed-By: /etc/apt/keyrings/duxlabs-sid.gpg
+DUX
+rm -f "$KEY" "$GPGKEY"
+trap - EXIT
+sudo apt-get update
+CANDIDATE=$(apt-cache policy niri-git | awk '/Candidate:/ {print $2; exit}')
+[[ -n $CANDIDATE && $CANDIDATE != "(none)" ]] ||
+  die "niri-git sem versao disponivel neste momento. Verifique o repo Dux."
+
+step "4/7 Simulando Niri Git, SDDM e servicos essenciais"
+PKGS=(
+  niri-git sddm sddm-theme-debian-elarun
+  alacritty fuzzel waybar mako-notifier swaylock
+  dbus-user-session xdg-desktop-portal-gnome xdg-desktop-portal-gtk
+  mesa-vulkan-drivers libgl1-mesa-dri libegl1 libgbm1 intel-media-va-driver
+  network-manager iwd
+  pipewire wireplumber pipewire-pulse pipewire-alsa pipewire-jack
+  alsa-utils rtkit brightnessctl playerctl
+  tlp neovim
 )
-if binds_path != main_path:
-    extras += (
-        '    Mod+Alt+L { spawn ' + json.dumps(amane) + ' "ipc" "call" "lock"; }\n'
-        '    Mod+Comma { spawn ' + json.dumps(amane) + ' "ipc" "call" "settings"; }\n'
-        '    XF86AudioRaiseVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "3%+"; }\n'
-        '    XF86AudioLowerVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "3%-"; }\n'
-        '    XF86AudioMute { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }\n'
-        '    XF86AudioMicMute { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle"; }\n'
-        '    XF86MonBrightnessUp { spawn "brightnessctl" "set" "+5%"; }\n'
-        '    XF86MonBrightnessDown { spawn "brightnessctl" "set" "5%-"; }\n'
-        '    XF86AudioPlay { spawn "playerctl" "play-pause"; }\n'
-        '    XF86AudioPause { spawn "playerctl" "play-pause"; }\n'
-        '    XF86AudioNext { spawn "playerctl" "next"; }\n'
-        '    XF86AudioPrev { spawn "playerctl" "previous"; }\n'
-    )
-binds = binds[:a] + extras + "".join(kept) + binds[b:]
-# Remove linhas de autostart de execucoes anteriores, sem apagar outros programas.
-main = re.sub(r'(?m)^\s*spawn-at-startup\s+"[^"\n]*/\.cargo/bin/amane"\s+"run"\s*$', "", main)
-main = re.sub(r'(?m)^(\s*spawn-at-startup\s+"waybar"[^ \n]*)$', r'// \1', main)
-main += '\n// Suzuha — autostart apos compilar\n'
-main += 'spawn-at-startup ' + json.dumps(amane) + ' "run"\n'
-binds_path.write_text(binds, encoding="utf-8")
-main_path.write_text(main, encoding="utf-8")
-PY
-
-if ! niri validate --config "$MAIN"; then
-  echo "[ERRO] Niri rejeitou a configuracao; restaurando arquivos."
-  cp "$BACKUP/niri-config-before.kdl" "$MAIN"
-  if [[ "$BINDS" != "$MAIN" ]]; then
-    cp "$BACKUP/niri-binds-before.kdl" "$BINDS"
-  fi
-  exit 1
+DESKTOP_SIM="$STATE/desktop-preview.log"
+sudo apt-get -s --no-install-recommends install "${PKGS[@]}" > "$DESKTOP_SIM"
+if grep -Eq '^Inst (gnome-shell|gnome-session|plasma-desktop|plasma-workspace|gdm3|dms|dms-git)([[:space:]]|$)' "$DESKTOP_SIM"; then
+  grep -E '^Inst (gnome-shell|gnome-session|plasma-desktop|plasma-workspace|gdm3|dms|dms-git)([[:space:]]|$)' "$DESKTOP_SIM" || true
+  die "Um desktop completo seria instalado; interrompendo."
 fi
-
-# Niri+DMS inicia DMS pela dependencia niri.service.d/dms.conf, NAO pela Waybar.
-if [[ "$BINDS" != "$MAIN" ]]; then
-  DROPIN="$HOME/.config/systemd/user/niri.service.d/dms.conf"
-  if [[ -f "$DROPIN" ]]; then
-    cp -a "$DROPIN" "$BACKUP/niri-dms.conf.previous"
-    if grep -q 'Wants=dms.service' "$DROPIN"; then
-      rm "$DROPIN"
-    fi
-  fi
-  mkdir -p "$HOME/.config/systemd/user"
-  if [[ ! -e "$DMS_MASK" && ! -L "$DMS_MASK" ]]; then
-    ln -s /dev/null "$DMS_MASK"
-  fi
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
+if grep -q '^Remv ' "$DESKTOP_SIM"; then
+  grep '^Remv ' "$DESKTOP_SIM"
+  die "Ha remocoes imprevistas. Revise $DESKTOP_SIM."
 fi
+echo "Simulacao sem GNOME Shell, Plasma Desktop, DMS ou remocoes."
+ask "Deseja instalar Niri Git + SDDM, driver Intel, rede, PipeWire, TLP e interface provisoria Waybar/Fuzzel?
+As recomendacoes opcionais do APT continuam desativadas." || die "Instalacao de desktop cancelada."
+sudo env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install "${PKGS[@]}"
 
-# As instalacoes anteriores foram movidas apenas para permitir recuperacao se falhasse.
-# A instalacao nova compilou e o Niri validou: agora podemos apagar os artefatos antigos.
-for old in amane-cache-previous amane-previous suzuha-previous suzuha-fonts-previous amane-cli-previous amane-config-path-previous; do
-  if [[ -e "$BACKUP/$old" ]]; then
-    rm -rf -- "$BACKUP/$old"
-  fi
-done
-if [[ ! -x "$HOME/.cache/amane/amane-shell" ]]; then
-  echo "[AVISO] Nao localizei o executavel da shell no cache (confira o log do amane)."
+step "5/7 NetworkManager + iwd, TLP e SDDM"
+sudo install -d -m 0755 /etc/NetworkManager/conf.d
+printf '%s\n' '[device]' 'wifi.backend=iwd' |
+  sudo tee /etc/NetworkManager/conf.d/10-wifi-backend.conf >/dev/null
+sudo systemctl enable NetworkManager.service
+sudo systemctl enable tlp.service
+echo "Nota: confira /etc/network/interfaces se Wi-Fi estiver gerenciado pelo ifupdown."
+
+step "6/7 Configuracao Niri simples (sem shell pesada)"
+mkdir -p "$HOME/.config/niri"
+CONFIG="$HOME/.config/niri/config.kdl"
+if [[ -e $CONFIG ]]; then
+  cp -a "$CONFIG" "$STATE/config-before-$(date +%Y%m%d-%H%M%S).kdl"
 fi
+cat > "$CONFIG" <<'KDL'
+// Niri + shell temporaria, pronta para ser substituida por Amane.
+spawn-at-startup "waybar"
+spawn-at-startup "mako"
+layout { gaps 10 }
+window-rule {
+    geometry-corner-radius 10
+    clip-to-geometry true
+}
+binds {
+    Mod+Shift+Slash { show-hotkey-overlay; }
+    Mod+T { spawn "alacritty"; }
+    Mod+R { spawn "fuzzel"; }
+    Mod+D { switch-preset-column-width; }
+    Mod+Q { close-window; }
+    Mod+Left { focus-column-left; }
+    Mod+Right { focus-column-right; }
+    Mod+Up { focus-window-up; }
+    Mod+Down { focus-window-down; }
+    Mod+Shift+Left { move-column-left; }
+    Mod+Shift+Right { move-column-right; }
+    Mod+Alt+L { spawn "swaylock"; }
+    Mod+Shift+E { quit; }
+    XF86AudioRaiseVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%+"; }
+    XF86AudioLowerVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
+    XF86AudioMute { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+    XF86MonBrightnessUp { spawn "brightnessctl" "set" "+5%"; }
+    XF86MonBrightnessDown { spawn "brightnessctl" "set" "5%-"; }
+}
+KDL
+niri --version
+niri validate --config "$CONFIG" ||
+  die "Niri nao validou a configuracao. SDDM ainda NAO foi habilitado."
+if ! find /usr/share/wayland-sessions -maxdepth 1 -iname '*niri*.desktop' -print -quit 2>/dev/null | grep -q .; then
+  die "Sessao Niri ausente em /usr/share/wayland-sessions: SDDM nao sera ativado."
+fi
+sudo systemctl enable sddm.service
 
-echo "========== PRONTO =========="
-echo "Amane compilado: $HOME/.cache/amane/amane-shell"
-echo "Super+R = Suzuha launcher | Super+D = resize por preset"
-echo "Autostart configurado. Entre novamente na sessao Niri."
-echo "TLP: BAL (tomada), SAV (bateria); Obsidian e Firefox instalados."
-echo "Backups: $BACKUP"
+step "7/7 Instalacao finalizada"
+echo "Debian Sid + Niri Git + SDDM prontos!"
+echo "Atalhos: Super+R launcher | Super+D resize | Super+T terminal."
+echo "Shell provisoria: Waybar/Mako. Nenhum DMS instalado."
+echo "APT sem recommends/suggests. Rede: NetworkManager + iwd."
+echo "Reinicie manualmente quando quiser: systemctl reboot"
 echo "Log: $LOG"
-echo "OBS: Mixer por aplicativo foi desativado (API incompatível no upstream)."
+echo "Backup APT: $BACKUP"
+echo "A GPU NVIDIA nao foi desativada por software; use iGPU-only na BIOS."
+echo "Rust e Amane serao instalados em uma etapa posterior."
