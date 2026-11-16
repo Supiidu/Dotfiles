@@ -24,7 +24,7 @@ O script usa uma interface em terminal com **Whiptail**, instalada apenas depois
 - Arquiva as fontes APT existentes, configura só o repositório Debian Sid e simula `apt-get full-upgrade` antes de pedir autorização.
 - Instala a chave GPG do [Dux Labs](https://duxlabs.dev/docs/repo/) exclusivamente para o repositório `Debian_Unstable`, com `Signed-By`.
 - Simula a instalação do Niri Git, SDDM e demais pacotes sem recomendações; bloqueia instalação de GNOME Shell, Plasma Desktop ou DMS.
-- Instala Mesa Intel, NetworkManager com backend iwd, PipeWire, TLP, terminal Alacritty, Fuzzel, Waybar, Mako, portais Wayland e ferramentas básicas.
+- Instala a biblioteca obrigatória `libwayland-server0` (corrige `NoWaylandLib`), Mesa Intel, NetworkManager com backend iwd, PipeWire, TLP, terminal Alacritty, Fuzzel, Waybar, Mako, portais Wayland e ferramentas básicas.
 - Cria uma configuração Niri com **Super+R** (Fuzzel), **Super+D** (largura da coluna), **Super+T** (Alacritty), **Super+Q** (fechar) e **Super+Shift+E** (sair).
 - Valida o arquivo KDL e a sessão Wayland antes de habilitar o SDDM.
 
