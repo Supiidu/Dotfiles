@@ -132,6 +132,7 @@ PKGS=(
   niri-git sddm sddm-theme-debian-elarun
   alacritty fuzzel waybar mako-notifier swaylock
   dbus-user-session xdg-desktop-portal-gnome xdg-desktop-portal-gtk
+  libwayland-server0
   mesa-vulkan-drivers libgl1-mesa-dri libegl1 libgbm1 intel-media-va-driver
   network-manager iwd
   pipewire wireplumber pipewire-pulse pipewire-alsa pipewire-jack
