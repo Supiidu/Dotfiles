@@ -32,7 +32,7 @@ cat <<'BANNER'
 - Sem Nix, AUR, GNOME Shell, Plasma Desktop ou DMS.
 - Instala APT minimal, migra para Sid e configura Dux Labs.
 - Instala SDDM, Mesa Intel, PipeWire, Niri e shell leve.
-- Super+R launcher; Super+D redimensionar.
+- Mantem a configuracao ORIGINAL do Niri, sem alterar atalhos.
 - Faz backup de fontes APT. Nao formata nem reinicia.
 BANNER
 echo "Sid pode quebrar durante transicoes de bibliotecas."
@@ -162,47 +162,10 @@ sudo systemctl enable NetworkManager.service
 sudo systemctl enable tlp.service
 echo "Nota: confira /etc/network/interfaces se Wi-Fi estiver gerenciado pelo ifupdown."
 
-step "6/7 Configuracao Niri simples (sem shell pesada)"
-mkdir -p "$HOME/.config/niri"
-CONFIG="$HOME/.config/niri/config.kdl"
-if [[ -e $CONFIG ]]; then
-  cp -a "$CONFIG" "$STATE/config-before-$(date +%Y%m%d-%H%M%S).kdl"
-fi
-cat > "$CONFIG" <<'KDL'
-// Niri + shell temporaria, pronta para ser substituida por Amane.
-spawn-at-startup "waybar"
-spawn-at-startup "mako"
-layout {
-    gaps 10
-}
-window-rule {
-    geometry-corner-radius 10
-    clip-to-geometry true
-}
-binds {
-    Mod+Shift+Slash { show-hotkey-overlay; }
-    Mod+T { spawn "alacritty"; }
-    Mod+R { spawn "fuzzel"; }
-    Mod+D { switch-preset-column-width; }
-    Mod+Q { close-window; }
-    Mod+Left { focus-column-left; }
-    Mod+Right { focus-column-right; }
-    Mod+Up { focus-window-up; }
-    Mod+Down { focus-window-down; }
-    Mod+Shift+Left { move-column-left; }
-    Mod+Shift+Right { move-column-right; }
-    Mod+Alt+L { spawn "swaylock"; }
-    Mod+Shift+E { quit; }
-    XF86AudioRaiseVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%+"; }
-    XF86AudioLowerVolume { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
-    XF86AudioMute { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
-    XF86MonBrightnessUp { spawn "brightnessctl" "set" "+5%"; }
-    XF86MonBrightnessDown { spawn "brightnessctl" "set" "5%-"; }
-}
-KDL
+step "6/7 Validando Niri sem substituir configuracoes"
 niri --version
-niri validate --config "$CONFIG" ||
-  die "Niri nao validou a configuracao. SDDM ainda NAO foi habilitado."
+echo "Nenhuma modificacao em ~/.config/niri/config.kdl."
+echo "Niri usara a configuracao padrao ao iniciar, caso nao exista arquivo de usuario."
 if ! find /usr/share/wayland-sessions -maxdepth 1 -iname '*niri*.desktop' -print -quit 2>/dev/null | grep -q .; then
   die "Sessao Niri ausente em /usr/share/wayland-sessions: SDDM nao sera ativado."
 fi
@@ -210,8 +173,8 @@ sudo systemctl enable sddm.service
 
 step "7/7 Instalacao finalizada"
 echo "Debian Sid + Niri Git + SDDM prontos!"
-echo "Atalhos: Super+R launcher | Super+D resize | Super+T terminal."
-echo "Shell provisoria: Waybar/Mako. Nenhum DMS instalado."
+echo "Configuracao Niri original: o script nao altera os atalhos."
+echo "Waybar, Mako e Fuzzel instalados, sem forcar autostart. Nenhum DMS instalado."
 echo "APT sem recommends/suggests. Rede: NetworkManager + iwd."
 echo "Reinicie manualmente quando quiser: systemctl reboot"
 echo "Log: $LOG"
